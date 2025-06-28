@@ -194,3 +194,20 @@ class SDAPIClient:
         except Exception as e:
             logger.error(f"{messages.MSG_CHECK_WEBUI_FAIL_LOG.format(error=e)}")
             return False, 0
+
+    async def get_current_model(self) -> str:
+        """获取当前使用的模型"""
+        try:
+            await self.ensure_session()
+            async with self.session.get(f"{self.config['webui_url']}/sdapi/v1/options") as resp:
+                if resp.status == 200:
+                    options = await resp.json()
+                    current_model = options.get('sd_model_checkpoint', '未知模型')
+                    logger.debug(f"当前使用的模型: {current_model}")
+                    return current_model
+                else:
+                    logger.error(f"获取当前模型失败，状态码: {resp.status}")
+                    return '未知模型'
+        except Exception as e:
+            logger.error(f"获取当前模型时发生异常: {e}")
+            return '未知模型'

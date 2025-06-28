@@ -19,7 +19,7 @@ from .messages import MSG_DEFAULT_LLM_PROMPT_PREFIX # 导入 MSG_DEFAULT_LLM_PRO
 from . import messages
 from .local_tag_utils import LocalTagManager
 
-PLUGIN_VERSION = "1.1.8"
+PLUGIN_VERSION = "1.1.9"
 
 @register("SDGen", "Maoer", "SDGen_Maoer", PLUGIN_VERSION)
 class SDGenerator(Star):
@@ -812,16 +812,23 @@ class SDGenerator(Star):
     @model.command("list")
     async def list_model(self, event: AstrMessageEvent):
         """
-        以“1. xxx.safetensors“形式打印可用的模型
+        显示当前使用的模型和可用模型列表
         """
         try:
+            # 获取当前使用的模型，并去除后缀名，只留模型名称
+            current_model = (await self.client.get_current_model()).rsplit('.', 1)[0]
+            
+            # 获取可用模型列表
             models = await self.client.get_sd_model_list()
             if not models:
                 yield event.plain_result(messages.MSG_NO_MODEL)
                 return
 
+            current_model_msg = messages.MSG_CURRENT_MODEL_SUCCESS.format(current_model=current_model)
             model_list = "\n".join(f"{i + 1}. {m}" for i, m in enumerate(models))
-            yield event.plain_result(messages.MSG_MODEL_LIST_SUCCESS.format(model_list=model_list))
+            full_message = f"{current_model_msg}\n{messages.MSG_MODEL_LIST_SUCCESS.format(model_list=model_list)}"
+            
+            yield event.plain_result(full_message)
 
         except Exception as e:
             logger.error(f"{messages.MSG_MODEL_LIST_FAIL_LOG}: {e}")
