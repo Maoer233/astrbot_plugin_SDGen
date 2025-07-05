@@ -209,12 +209,12 @@ class SDGenerator(Star):
             generated_prompt = await self.utils.generate_prompt_with_llm(event, prompt)
             logger.debug(f"LLM generated prompt: {generated_prompt}")
             
-            # 优先使用 prompt_prefix.json
-            prefix_from_json = self._load_prompt_prefix()
-            if prefix_from_json:
-                positive_prompt = prefix_from_json + generated_prompt
+            # 优先使用 prompt_prefix.json 中的 txt2img_prefix
+            txt2img_prefix = self._load_prompt_prefix("txt2img_prefix")
+            if txt2img_prefix:
+                positive_prompt = txt2img_prefix + generated_prompt
             else:
-                # 文生图：始终用 positive_prompt_global
+                # 文生图：回退到 positive_prompt_global
                 positive_prompt = self.config.get("positive_prompt_global", "") + generated_prompt
 
             #输出正向提示词
@@ -317,8 +317,8 @@ class SDGenerator(Star):
                 
 
             # 这里不再调用 LLM，只用传入的 prompt
-            # 图生图：优先用 prompt_prefix.json
-            img2img_prefix = self._load_prompt_prefix()
+            # 图生图：优先用 prompt_prefix.json 中的 img2img_prefix
+            img2img_prefix = self._load_prompt_prefix("img2img_prefix")
             if img2img_prefix:
                 final_prompt = img2img_prefix + prompt
             else:
@@ -476,36 +476,53 @@ class SDGenerator(Star):
     def i2i(self):
         pass
 
-    @sd.command("prompt_prefix")
-    async def set_prompt_prefix(self, event: AstrMessageEvent):
+    @sd.command("t2i_prefix")
+    async def set_t2i_prompt_prefix(self, event: AstrMessageEvent):
         """
-        设置或查询全局正向提示词前缀。
-        用法：
-        /sd prompt_prefix [新内容]  # 设置
-        /sd prompt_prefix           # 查询当前内容
-        说明：此设置将覆盖 config.json 中的 positive_prompt_global。
+        设置或查询文生图正向提示词前缀。
+        用法：/sd t2i_prefix [新内容]
         """
-        try:
-            # 兼容各种前缀写法
-            raw = event.message_str
-            prefix_content = None
-            for prefix in [".sd prompt_prefix", "/sd prompt_prefix", "sd prompt_prefix"]:
-                if raw.strip().lower().startswith(prefix):
-                    prefix_content = raw.strip()[len(prefix):].strip()
-                    break
+        await self._handle_prefix_command(event, "txt2img_prefix", "文生图")
 
-            if not prefix_content:
-                value = self._load_prompt_prefix()
+    @i2i.command("prompt_prefix")
+    async def set_i2i_prompt_prefix(self, event: AstrMessageEvent):
+        """
+        设置或查询图生图正向提示词前缀。
+        用法：/sd i2i prompt_prefix [新内容]
+        """
+        await self._handle_prefix_command(event, "img2img_prefix", "图生图")
+
+    async def _handle_prefix_command(self, event: AstrMessageEvent, prefix_key: str, prefix_name: str):
+        """处理前缀设置和查询的通用逻辑"""
+        try:
+            raw = event.message_str
+            # 动态生成命令前缀以进行匹配
+            command_part = prefix_key.replace('_prefix', '').replace('txt', 't')
+            if "i2i" in command_part:
+                full_command = f"sd i2i {command_part.replace('i2i_', '')}"
+            else:
+                full_command = f"sd {command_part}"
+
+            prefix_content = None
+            # 兼容各种命令前缀
+            for p in [f".{full_command}", f"/{full_command}", full_command]:
+                if raw.strip().lower().startswith(p):
+                    prefix_content = raw.strip()[len(p):].strip()
+                    break
+            
+            if prefix_content is None: # 查询
+                value = self._load_prompt_prefix(prefix_key)
                 if value:
-                    yield event.plain_result(f"当前全局正向提示词前缀：\n{value}")
+                    yield event.plain_result(f"当前{prefix_name}正向提示词前缀：\n{value}")
                 else:
-                    yield event.plain_result("当前全局正向提示词前缀未设置，将使用 config.json 中的 positive_prompt_global。")
+                    yield event.plain_result(f"当前{prefix_name}正向提示词前缀未设置，将使用全局设置。")
                 return
 
-            self._save_prompt_prefix(prefix_content)
-            yield event.plain_result("✅ 全局正向提示词前缀已更新")
+            # 设置
+            self._save_prompt_prefix(prefix_key, prefix_content)
+            yield event.plain_result(f"✅ {prefix_name}正向提示词前缀已更新")
         except Exception as e:
-            logger.error(f"设置全局正向提示词前缀失败: {e}")
+            logger.error(f"设置{prefix_name}正向提示词前缀失败: {e}")
             yield event.plain_result(f"❌ 设置失败: {e}")
 
     @sd.command("verbose")
@@ -1306,25 +1323,32 @@ class SDGenerator(Star):
         else:
             yield event.plain_result("未找到包含该关键词的tag名称。")
 
-    def _load_prompt_prefix(self):
-        if self._prompt_prefix_cache is not None:
-            return self._prompt_prefix_cache
+    def _load_prompt_prefix(self, key: str) -> str:
         if os.path.exists(self.prompt_prefix_path):
             try:
                 with open(self.prompt_prefix_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    self._prompt_prefix_cache = data.get("prompt_prefix", "")
-                    return self._prompt_prefix_cache
-            except Exception as e:
+                    return data.get(key, "")
+            except (IOError, json.JSONDecodeError) as e:
                 logger.error(f"读取 prompt_prefix.json 失败: {e}")
+                return ""
         return ""
 
-    def _save_prompt_prefix(self, value: str):
+    def _save_prompt_prefix(self, key: str, value: str):
+        data = {}
+        if os.path.exists(self.prompt_prefix_path):
+            try:
+                with open(self.prompt_prefix_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (IOError, json.JSONDecodeError) as e:
+                logger.error(f"读取旧的 prompt_prefix.json 失败: {e}")
+        
+        data[key] = value
+        
         try:
             with open(self.prompt_prefix_path, "w", encoding="utf-8") as f:
-                json.dump({"prompt_prefix": value}, f, ensure_ascii=False, indent=2)
-            self._prompt_prefix_cache = value
-        except Exception as e:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except IOError as e:
             logger.error(f"写入 prompt_prefix.json 失败: {e}")
 
     @filter.command("原生画")
