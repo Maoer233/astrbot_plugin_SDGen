@@ -18,7 +18,7 @@
 - `/sd check`：检查 Stable Diffusion WebUI 的连接状态。
 - `/sd conf`：显示当前使用的所有图像生成参数，包括模型、采样器、分辨率等。
 - `/sd help`：显示本插件所有可用指令及其描述。
-- `/sd t2i_prefix [内容]`：设置或查询文生图正向提示词前缀。
+- `/sd prompt_prefix [内容]`：设置或查询文生图正向提示词前缀。
 - `/sd i2i prompt_prefix [内容]`：设置或查询图生图正向提示词前缀。
 
 ### 高级功能指令
@@ -170,7 +170,7 @@
 - **调整 `prompt_guidelines` 逻辑**:
   - LLM生成提示词的附加限制 (`prompt_guidelines`) 现在仅对非白名单群聊生效。
 - **分离前缀命令**:
-  - 将统一的 `/sd prompt_prefix` 命令分离为 `/sd t2i_prefix` (文生图) 和 `/sd i2i prompt_prefix` (图生图)。
+  - 将统一的 `/sd prompt_prefix` 命令分离为 `/sd prompt_prefix` (文生图) 和 `/sd i2i prompt_prefix` (图生图)。
   - `prompt_prefix.json` 现在可以分别存储 `txt2img_prefix` 和 `img2img_prefix`。
 - **代码审查与修复**:
   - 修复了 `sd_utils.py` 中的 `NameError`。

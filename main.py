@@ -476,11 +476,11 @@ class SDGenerator(Star):
     def i2i(self):
         pass
 
-    @sd.command("t2i_prefix")
+    @sd.command("prompt_prefix")
     async def set_t2i_prompt_prefix(self, event: AstrMessageEvent):
         """
         设置或查询文生图正向提示词前缀。
-        用法：/sd t2i_prefix [新内容]
+        用法：/sd prompt_prefix [新内容]
         """
         await self._handle_prefix_command(event, "txt2img_prefix", "文生图")
 
@@ -497,11 +497,13 @@ class SDGenerator(Star):
         try:
             raw = event.message_str
             # 动态生成命令前缀以进行匹配
-            command_part = prefix_key.replace('_prefix', '').replace('txt', 't')
-            if "i2i" in command_part:
-                full_command = f"sd i2i {command_part.replace('i2i_', '')}"
+            if prefix_key == "txt2img_prefix":
+                full_command = "sd prompt_prefix"
+            elif prefix_key == "img2img_prefix":
+                full_command = "sd i2i prompt_prefix"
             else:
-                full_command = f"sd {command_part}"
+                # Fallback, should not happen
+                full_command = "sd"
 
             prefix_content = None
             # 兼容各种命令前缀
