@@ -3,6 +3,7 @@ import io
 import math # 导入 math 模块
 from PIL import Image
 from astrbot.api.all import logger, AstrBotConfig # 导入 AstrBotConfig
+from astrbot.api.event import AstrMessageEvent
 from . import messages
 
 class SDUtils:
@@ -43,13 +44,13 @@ class SDUtils:
 
         return target_width, target_height
 
-    async def generate_payload(self, prompt: str) -> dict:
+    async def generate_payload(self, prompt: str, negative_prompt: str) -> dict:
         """构建生成参数"""
         params = self.config["default_params"]
 
         return {
             "prompt": prompt,
-            "negative_prompt": self.config["negative_prompt_global"],
+            "negative_prompt": negative_prompt,
             "width": params["width"],
             "height": params["height"],
             "steps": params["steps"],
@@ -60,7 +61,7 @@ class SDUtils:
             "n_iter": params["n_iter"],
         }
 
-    async def generate_img2img_payload(self, image_data: str, prompt: str, original_width: int, original_height: int) -> dict:
+    async def generate_img2img_payload(self, image_data: str, prompt: str, original_width: int, original_height: int, negative_prompt: str) -> dict:
         """构建图生图生成参数"""
         params = self.config["img2img_params"]
         
@@ -74,7 +75,7 @@ class SDUtils:
         return {
             "init_images": [image_data],
             "prompt": prompt,
-            "negative_prompt": self.config["negative_prompt_global"],
+            "negative_prompt": negative_prompt,
             "width": target_width,
             "height": target_height,
             "steps": params["steps"],
@@ -95,21 +96,29 @@ class SDUtils:
         prompt_with_notice = f"{prompt}{self.config.get('llm_prompt_suffix', '')}"
         return prompt_with_notice
 
-    async def generate_prompt_with_llm(self, prompt: str) -> str:
+    async def generate_prompt_with_llm(self, event: AstrMessageEvent, prompt: str) -> str:
         provider = self.context.get_using_provider()
         if provider:
             # 从配置中获取 LLM_PROMPT_PREFIX 和 prompt_guidelines
             llm_prompt_prefix = self.config.get("LLM_PROMPT_PREFIX", messages.MSG_DEFAULT_LLM_PROMPT_PREFIX) # 如果配置中没有，则使用默认值
-            prompt_guidelines = self.config.get("prompt_guidelines", "")
-
+            
             # 对用户输入的 prompt 进行清理，确保不包含LLM无法处理的实体
             cleaned_user_prompt = self._clean_prompt_for_llm(prompt)
             
-            # 在用户输入的 prompt 结尾添加指定说明
-            prompt_with_notice = f"{cleaned_user_prompt}{messages.MSG_LLM_PROMPT_NOTICE}"
+            # 根据白名单决定是否附加提示和是否使用附加限制
+            group_id = event.get_group_id()
+            whitelist_groups = self.config.get("whitelist_groups", [])
+            
+            final_prompt_description = cleaned_user_prompt
+            prompt_guidelines = self.config.get("prompt_guidelines", "")
+
+            if group_id and group_id in whitelist_groups:
+                final_prompt_description = f"{cleaned_user_prompt}{messages.MSG_LLM_PROMPT_NOTICE}"
+                # 在白名单中，不使用附加限制
+                prompt_guidelines = ""
             
             # 构建 LLM 提示词，确保各部分之间有适当的换行
-            full_prompt = f"{llm_prompt_prefix}\n{prompt_guidelines}\n描述：{prompt_with_notice}"
+            full_prompt = f"{llm_prompt_prefix}\n{prompt_guidelines}\n描述：{final_prompt_description}".strip()
 
             response = await provider.text_chat(full_prompt, session_id=None)
             if response.completion_text:

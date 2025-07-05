@@ -38,11 +38,16 @@ class SDGenerator(Star):
         self.data_dir = StarTools.get_data_dir("SDGen")
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
-        self.local_tag_mgr = LocalTagManager(str(self.data_dir / "local_tags.json"))
+        self.local_tag_mgr = LocalTagManager("astrbot_plugin_SDGen/local_tags.json")
 
         # 更新：prompt_prefix.json 路径
-        self.prompt_prefix_path = self.data_dir / "prompt_prefix.json"
+        self.prompt_prefix_path = Path("astrbot_plugin_SDGen/prompt_prefix.json")
         self._prompt_prefix_cache = None
+
+        # 加载白名单和黑名单配置
+        self.whitelist_groups = self.config.get("whitelist_groups", [])
+        self.blacklist_groups = self.config.get("blacklist_groups", [])
+        self.negative_prompt_whitelist = self.config.get("negative_prompt_whitelist", "")
 
     async def terminate(self):
         """插件卸载/停用时调用，用于清理资源"""
@@ -175,6 +180,13 @@ class SDGenerator(Star):
     async def _generate_image_impl(self, event: AstrMessageEvent, prompt: str, skip_verbose_msg=False):
         """实际的图像生成逻辑，供 generate_image/draw 调用"""
         async with self.task_semaphore:
+            group_id = event.get_group_id()
+
+            # 黑名单检查
+            if group_id and group_id in self.blacklist_groups:
+                logger.info(f"群聊 {group_id} 在黑名单中，不响应绘画命令。")
+                return # 不响应任何绘画命令
+
             # 检查webui可用性
             if not (await self.client.check_webui_available())[0]:
                 yield event.plain_result(messages.MSG_WEBUI_UNAVAILABLE)
@@ -184,18 +196,33 @@ class SDGenerator(Star):
             if verbose and not skip_verbose_msg:
                 yield event.plain_result(messages.MSG_GENERATING)
 
+            # 根据白名单设置负面提示词和LLM提示词附加限制
+            negative_prompt = self.config.get("negative_prompt_global", "")
+            enable_generate_prompt = self.config.get("enable_generate_prompt", True)
+            
+            if group_id and group_id in self.whitelist_groups:
+                if self.negative_prompt_whitelist:
+                    negative_prompt = self.negative_prompt_whitelist
+                
+            
             # 始终启用 LLM 自动生成 prompt
-            generated_prompt = await self.utils.generate_prompt_with_llm(prompt)
+            generated_prompt = await self.utils.generate_prompt_with_llm(event, prompt)
             logger.debug(f"LLM generated prompt: {generated_prompt}")
-            # 文生图：始终用 positive_prompt_global
-            positive_prompt = self.config.get("positive_prompt_global", "") + generated_prompt
+            
+            # 优先使用 prompt_prefix.json
+            prefix_from_json = self._load_prompt_prefix()
+            if prefix_from_json:
+                positive_prompt = prefix_from_json + generated_prompt
+            else:
+                # 文生图：始终用 positive_prompt_global
+                positive_prompt = self.config.get("positive_prompt_global", "") + generated_prompt
 
             #输出正向提示词
             if self.config.get("enable_show_positive_prompt", False):
                 yield event.plain_result(f"{messages.MSG_POSITIVE_PROMPT_DISPLAY}: {positive_prompt}")
 
             # 生成图像
-            payload = await self.utils.generate_payload(positive_prompt)
+            payload = await self.utils.generate_payload(positive_prompt, negative_prompt) # 传递负面提示词
             response = await self.client.call_t2i_api(payload)
             if not response.get("images"):
                 raise ValueError(messages.MSG_API_RETURN_ERROR)
@@ -253,6 +280,13 @@ class SDGenerator(Star):
     async def _img2img_impl(self, event: AstrMessageEvent, image_data: str, prompt: str):
         """实际的图生图逻辑，供 img2img_command/img2img_draw 调用"""
         async with self.task_semaphore:
+            group_id = event.get_group_id()
+
+            # 黑名单检查
+            if group_id and group_id in self.blacklist_groups:
+                logger.info(f"群聊 {group_id} 在黑名单中，不响应绘画命令。")
+                return # 不响应任何绘画命令
+
             # 检查webui可用性
             if not (await self.client.check_webui_available())[0]:
                 yield event.plain_result(messages.MSG_WEBUI_UNAVAILABLE)
@@ -273,6 +307,15 @@ class SDGenerator(Star):
                 closest_width, closest_height = self.utils._get_closest_resolution(original_width, original_height)
                 yield event.plain_result(messages.MSG_IMG2IMG_RESOLUTION_AUTO_SET.format(width=closest_width, height=closest_height))
 
+            # 根据白名单设置负面提示词和LLM提示词附加限制
+            negative_prompt = self.config.get("negative_prompt_global", "")
+            enable_img2img_generate_prompt = self.config.get("enable_img2img_generate_prompt", True)
+            
+            if group_id and group_id in self.whitelist_groups:
+                if self.negative_prompt_whitelist:
+                    negative_prompt = self.negative_prompt_whitelist
+                
+
             # 这里不再调用 LLM，只用传入的 prompt
             # 图生图：优先用 prompt_prefix.json
             img2img_prefix = self._load_prompt_prefix()
@@ -282,7 +325,7 @@ class SDGenerator(Star):
                 final_prompt = self.config.get("positive_prompt_global", "") + prompt
 
             # 生成图像
-            payload = await self.utils.generate_img2img_payload(image_data, final_prompt, original_width, original_height)
+            payload = await self.utils.generate_img2img_payload(image_data, final_prompt, original_width, original_height, negative_prompt) # 传递负面提示词
             logger.debug(f"Img2img API Payload: {json.dumps(payload, indent=2)}") # 添加日志输出 payload
             response = await self.client.call_i2i_api(payload)
             if not response.get("images"):
@@ -433,20 +476,20 @@ class SDGenerator(Star):
     def i2i(self):
         pass
 
-    @i2i.command("prompt_prefix")
-    async def set_img2img_prompt_prefix(self, event: AstrMessageEvent):
+    @sd.command("prompt_prefix")
+    async def set_prompt_prefix(self, event: AstrMessageEvent):
         """
-        设置或查询图生图正向提示词前缀。
+        设置或查询全局正向提示词前缀。
         用法：
-        /sd i2i prompt_prefix [新内容]  # 设置
-        /sd i2i prompt_prefix           # 查询当前内容
-        说明：你可以直接在命令后输入你的说明或前缀内容，支持长文本。
+        /sd prompt_prefix [新内容]  # 设置
+        /sd prompt_prefix           # 查询当前内容
+        说明：此设置将覆盖 config.json 中的 positive_prompt_global。
         """
         try:
             # 兼容各种前缀写法
             raw = event.message_str
             prefix_content = None
-            for prefix in [".sd i2i prompt_prefix", "/sd i2i prompt_prefix", "sd i2i prompt_prefix"]:
+            for prefix in [".sd prompt_prefix", "/sd prompt_prefix", "sd prompt_prefix"]:
                 if raw.strip().lower().startswith(prefix):
                     prefix_content = raw.strip()[len(prefix):].strip()
                     break
@@ -454,15 +497,15 @@ class SDGenerator(Star):
             if not prefix_content:
                 value = self._load_prompt_prefix()
                 if value:
-                    yield event.plain_result(f"当前图生图正向提示词前缀：\n{value}")
+                    yield event.plain_result(f"当前全局正向提示词前缀：\n{value}")
                 else:
-                    yield event.plain_result("当前图生图正向提示词前缀未设置，将使用文生图前缀。")
+                    yield event.plain_result("当前全局正向提示词前缀未设置，将使用 config.json 中的 positive_prompt_global。")
                 return
 
             self._save_prompt_prefix(prefix_content)
-            yield event.plain_result("✅ 图生图正向提示词前缀已更新")
+            yield event.plain_result("✅ 全局正向提示词前缀已更新")
         except Exception as e:
-            logger.error(f"设置图生图正向提示词前缀失败: {e}")
+            logger.error(f"设置全局正向提示词前缀失败: {e}")
             yield event.plain_result(f"❌ 设置失败: {e}")
 
     @sd.command("verbose")
@@ -576,7 +619,7 @@ class SDGenerator(Star):
                 f"{messages.MSG_UPSCALE_MODE}: {'开启' if upscale else '关闭'}\n\n"
                 f"{messages.MSG_SHOW_PROMPT_MODE}: {'开启' if show_positive_prompt else '关闭'}\n\n"
                 f"{messages.MSG_LLM_PROMPT_MODE}: {'开启' if generate_prompt else '关闭'}\n\n"
-                f"{messages.MSG_LLM_IMG2IMG_PROMPT_MODE}: {'开启' if enable_img2img_generate_prompt else '关闭'}" # 添加图生图LLM生成提示词开关
+                f"{messages.MSG_LLM_IMG2IMG_PROMPT_MODE}: {'开启' if enable_img2img_generate_prompt else '关闭'}"
             )
 
             yield event.plain_result(conf_message)

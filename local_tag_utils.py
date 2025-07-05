@@ -1,9 +1,7 @@
 import os
 import json
 import threading
-import logging
-
-logger = logging.getLogger(__name__)
+from astrbot.api import logger
 
 class LocalTagManager:
     def __init__(self, path):

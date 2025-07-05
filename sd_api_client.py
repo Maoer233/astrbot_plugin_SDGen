@@ -30,7 +30,7 @@ class SDAPIClient:
     async def download_image_to_base64(self, image_url: str) -> str:
         """
         下载图片并将其转换为 Base64 编码字符串。
-        如果下载失败，将抛出 httpx.RequestError 或其他异常。
+        如果下载失败，将抛出 aiohttp.ClientError 或其他异常。
         """
         await self.ensure_session()
         try:
@@ -139,7 +139,7 @@ class SDAPIClient:
         """调用 Stable Diffusion 图生图 API"""
         return await self.call_sd_api("/sdapi/v1/img2img", payload)
 
-    async def apply_image_processing(self, image_origin: str) -> str:
+    async def apply_image_processing(self, image_origin: str, negative_prompt: str = "") -> str:
         """统一处理高分辨率修复与超分辨率放大"""
         params = self.config["default_params"]
         upscale_factor = params.get("upscale_factor", "2")
@@ -157,7 +157,9 @@ class SDAPIClient:
             "gfpgan_visibility": 0,
             "codeformer_visibility": 0,
             "codeformer_weight": 0,
-            "extras_upscaler_2_visibility": 0
+            "extras_upscaler_2_visibility": 0,
+            "prompt": "", # 确保 prompt 字段存在
+            "negative_prompt": negative_prompt # 添加 negative_prompt
         }
 
         resp = await self.call_sd_api("/sdapi/v1/extra-single-image", payload)

@@ -2,7 +2,7 @@
     "webui_url": {
         "type": "string",
         "description": "WebUI API地址",
-        "default": "http://127.0.0.1:7860",
+        "default": "http://127.00.1:7860",
         "hint": "需要包含http://或https://前缀"
     },
     "verbose": {
@@ -52,6 +52,30 @@
         "description": "全局负面提示词",
         "default": "(worst quality, low quality:1.4), deformed, bad anatomy",
         "hint": "会自动附加到所有生成请求"
+    },
+    "negative_prompt_whitelist": {
+        "type": "string",
+        "description": "白名单群聊专属负面提示词",
+        "default": "",
+        "hint": "仅在白名单群聊中生效，会覆盖全局负面提示词"
+    },
+    "whitelist_groups": {
+        "type": "list",
+        "description": "白名单群聊ID列表",
+        "default": [],
+        "items": {
+            "type": "string"
+        },
+        "hint": "在此列表中的群聊将使用白名单专属配置"
+    },
+    "blacklist_groups": {
+        "type": "list",
+        "description": "黑名单群聊ID列表",
+        "default": [],
+        "items": {
+            "type": "string"
+        },
+        "hint": "在此列表中的群聊将不响应绘画命令"
     },
     "default_params": {
         "type": "object",
@@ -189,7 +213,7 @@
     },
     "prompt_guidelines": {
         "type": "string",
-        "description": "LMM生成提示词时的附加限制",
+        "description": "LLM生成提示词时的附加限制",
         "default": "",
         "hint": "屏蔽色情内容等, 例如`任何被判断为色情的提示词都应该被替换，避免出现色情内容`"
     },
