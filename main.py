@@ -34,12 +34,8 @@ class SDGenerator(Star):
         self.client = SDAPIClient(self.config)
         self.utils = SDUtils(self.config, self.context)
 
-        # 获取插件数据目录并创建
-        self.data_dir = StarTools.get_data_dir("SDGen")
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-
-        self.local_tag_mgr = LocalTagManager(str(self.data_dir / "local_tags.json"))
-        self.prompt_prefix_path = self.data_dir / "prompt_prefix.json"
+        self.local_tag_mgr = LocalTagManager("astrbot_plugin_SDGen/local_tags.json")
+        self.prompt_prefix_path = Path("astrbot_plugin_SDGen/prompt_prefix.json")
         self._prompt_prefix_cache = None
 
         # 加载白名单和黑名单配置

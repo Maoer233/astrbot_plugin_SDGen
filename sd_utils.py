@@ -103,7 +103,7 @@ class SDUtils:
             llm_prompt_prefix = self.config.get("LLM_PROMPT_PREFIX", messages.MSG_DEFAULT_LLM_PROMPT_PREFIX) # 如果配置中没有，则使用默认值
             
             # 对用户输入的 prompt 进行清理，确保不包含LLM无法处理的实体
-            cleaned_user_prompt = self._clean_prompt_for_llm(prompt)
+            cleaned_user_prompt = prompt
             
             # 根据白名单决定是否附加提示和是否使用附加限制
             group_id = event.get_group_id()
@@ -190,9 +190,3 @@ class SDUtils:
             f"{messages.MSG_N_ITER}: {n_iter}\n"
             f"{messages.MSG_IMG2IMG_RESOLUTION_AUTO_SET.format(width='自动', height='自动')}"
         )
-
-    def _clean_prompt_for_llm(self, prompt: str) -> str:
-        """清理提示词，移除可能导致LLM解析问题的特殊字符"""
-        # 保留字母、数字、中文、英文、空格和常见标点符号
-        cleaned_prompt = re.sub(r"[^a-zA-Z0-9\u4e00-\u9fa5\s,.!?;:\"'()（）【】]", "", prompt)
-        return cleaned_prompt

@@ -5,8 +5,7 @@ import aiohttp
 from astrbot.api.all import logger
 from . import messages
 
-from astrbot.api.star import StarTools # 导入 StarTools
-TEMP_PATH = StarTools.get_data_dir("SDGen") / "temp"
+TEMP_PATH = "astrbot_plugin_SDGen/temp"
 
 class SDAPIClient:
     def __init__(self, config: dict):
