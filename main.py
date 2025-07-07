@@ -19,7 +19,7 @@ from .messages import MSG_DEFAULT_LLM_PROMPT_PREFIX # 导入 MSG_DEFAULT_LLM_PRO
 from . import messages
 from .local_tag_utils import LocalTagManager
 
-PLUGIN_VERSION = "1.1.10"
+PLUGIN_VERSION = "1.1.11"
 
 @register("SDGen", "Maoer", "SDGen_Maoer", PLUGIN_VERSION)
 class SDGenerator(Star):
@@ -34,8 +34,10 @@ class SDGenerator(Star):
         self.client = SDAPIClient(self.config)
         self.utils = SDUtils(self.config, self.context)
 
-        self.local_tag_mgr = LocalTagManager("astrbot_plugin_SDGen/local_tags.json")
-        self.prompt_prefix_path = Path("astrbot_plugin_SDGen/prompt_prefix.json")
+        # 自动获取插件当前目录，确保路径正确
+        plugin_dir = Path(__file__).parent.resolve()
+        self.local_tag_mgr = LocalTagManager(str(plugin_dir / "local_tags.json"))
+        self.prompt_prefix_path = plugin_dir / "prompt_prefix.json"
         self._prompt_prefix_cache = None
 
         # 加载白名单和黑名单配置
@@ -87,20 +89,30 @@ class SDGenerator(Star):
 
     @filter.command("画")
     async def draw(self, event: AstrMessageEvent):
-        """直接处理 .画 指令，规避 LLM 前置拦截，完整保留用户输入"""
+        """直接处理 .画 指令，分离lora参数并拼接LLM结果"""
         raw_msg = event.message_str
         prompt_str = raw_msg.lstrip(".／/画").strip()
-        
-        # 记录替换前后内容
-        prompt_str, changed_keys = self._replace_local_tags(prompt_str)
-        
-        # 构造用于消息显示的 changed 列表
+        # 1. 分离 lora 参数（支持多个lora:xxx:1）
+        lora_pattern = r"(lora:[^,，\s]+:[^,，\s]+)"
+        lora_matches = re.findall(lora_pattern, prompt_str)
+        # 移除所有lora参数，剩下主提示词
+        main_prompt = re.sub(lora_pattern, "", prompt_str)
+        # 去除多余逗号和空格
+        main_prompt = main_prompt.strip(",， ").strip()
+        # 2. 本地tag替换
+        main_prompt, changed_keys = self._replace_local_tags(main_prompt)
+        # 3. 主提示词送入LLM
+        llm_result = await self.utils.generate_prompt_with_llm(event, main_prompt)
+        # 4. 拼接LLM结果和lora参数
+        final_prompt = llm_result
+        if lora_matches:
+            final_prompt = f"{llm_result}," + ",".join(lora_matches)
+            logger.info(f"已拼接LoRA模型参数: {', '.join(lora_matches)}")  # 新增日志输出
+        # 5. 构造用于消息显示的 changed 列表
         changed_display = [f"{k}→{self.local_tag_mgr.tags[k]}" for k in changed_keys]
-
-        # 判断是否有“预设”相关tag
         preset_tags = [item for item in changed_display if "预设" in item]
         other_tags = [item for item in changed_display if "预设" not in item]
-        
+
         msg = "在画了在画了"
         if changed_display:
             if preset_tags and not other_tags:
@@ -110,7 +122,8 @@ class SDGenerator(Star):
             else:
                 msg += f"，为你替换了以下tag：{', '.join(changed_display)}"
         await event.send(event.plain_result(msg))
-        async for result in self._generate_image_impl(event, prompt_str, skip_verbose_msg=True):
+        # 6. 传入绘图模型
+        async for result in self._generate_image_impl(event, final_prompt, skip_verbose_msg=True):
             yield result
 
     @filter.command("图生图", alias={"i2i_draw"})
@@ -197,19 +210,18 @@ class SDGenerator(Star):
             if group_id and group_id in self.whitelist_groups:
                 if self.negative_prompt_whitelist:
                     negative_prompt = self.negative_prompt_whitelist
-                
-            
-            # 始终启用 LLM 自动生成 prompt
-            generated_prompt = await self.utils.generate_prompt_with_llm(event, prompt)
-            logger.debug(f"LLM generated prompt: {generated_prompt}")
-            
+
+            # 这里不要再调用 LLM 了，直接用 prompt
+            # generated_prompt = await self.utils.generate_prompt_with_llm(event, prompt)
+            # logger.debug(f"LLM generated prompt: {generated_prompt}")
+
             # 优先使用 prompt_prefix.json 中的 txt2img_prefix
             txt2img_prefix = self._load_prompt_prefix("txt2img_prefix")
             if txt2img_prefix:
-                positive_prompt = txt2img_prefix + generated_prompt
+                positive_prompt = txt2img_prefix + prompt
             else:
                 # 文生图：回退到 positive_prompt_global
-                positive_prompt = self.config.get("positive_prompt_global", "") + generated_prompt
+                positive_prompt = self.config.get("positive_prompt_global", "") + prompt
 
             #输出正向提示词
             if self.config.get("enable_show_positive_prompt", False):
@@ -225,7 +237,6 @@ class SDGenerator(Star):
 
             async for result in self._process_and_yield_images(event, images, verbose):
                 yield result
-
     async def _handle_api_errors(self, event: AstrMessageEvent, func, *args, **kwargs):
         """
         通用API错误处理辅助函数。
@@ -1371,7 +1382,7 @@ class SDGenerator(Star):
                 msg += f"，为你替换了以下tag：{', '.join(other_tags)}，预设相关tag已替换"
             else:
                 msg += f"，为你替换了以下tag：{', '.join(changed_display)}"
-        yield event.plain_result(msg)
+        await event.send(event.plain_result(msg))  # 用 await 只发一次
 
         async with self.task_semaphore:
             # 检查webui可用性
@@ -1385,13 +1396,14 @@ class SDGenerator(Star):
 
             # 文生图：始终用 positive_prompt_global
             positive_prompt = self.config.get("positive_prompt_global", "") + prompt_str
+            negative_prompt = self.config.get("negative_prompt_global", "")
 
             # 输出正向提示词
             if self.config.get("enable_show_positive_prompt", False):
                 yield event.plain_result(f"{messages.MSG_POSITIVE_PROMPT_DISPLAY}: {positive_prompt}")
 
             # 生成图像
-            payload = await self.utils.generate_payload(positive_prompt)
+            payload = await self.utils.generate_payload(positive_prompt, negative_prompt)
             response = await self.client.call_t2i_api(payload)
             if not response.get("images"):
                 raise ValueError(messages.MSG_API_RETURN_ERROR)
