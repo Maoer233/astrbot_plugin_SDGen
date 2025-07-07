@@ -19,7 +19,7 @@ from .messages import MSG_DEFAULT_LLM_PROMPT_PREFIX # 导入 MSG_DEFAULT_LLM_PRO
 from . import messages
 from .local_tag_utils import LocalTagManager
 
-PLUGIN_VERSION = "1.1.9"
+PLUGIN_VERSION = "1.1.10"
 
 @register("SDGen", "Maoer", "SDGen_Maoer", PLUGIN_VERSION)
 class SDGenerator(Star):
@@ -38,10 +38,8 @@ class SDGenerator(Star):
         self.data_dir = StarTools.get_data_dir("SDGen")
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
-        self.local_tag_mgr = LocalTagManager("astrbot_plugin_SDGen/local_tags.json")
-
-        # 更新：prompt_prefix.json 路径
-        self.prompt_prefix_path = Path("astrbot_plugin_SDGen/prompt_prefix.json")
+        self.local_tag_mgr = LocalTagManager(str(self.data_dir / "local_tags.json"))
+        self.prompt_prefix_path = self.data_dir / "prompt_prefix.json"
         self._prompt_prefix_cache = None
 
         # 加载白名单和黑名单配置
