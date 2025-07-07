@@ -92,8 +92,8 @@ class SDGenerator(Star):
         """直接处理 .画 指令，分离lora参数并拼接LLM结果"""
         raw_msg = event.message_str
         prompt_str = raw_msg.lstrip(".／/画").strip()
-        # 1. 分离 lora 参数（支持多个lora:xxx:1）
-        lora_pattern = r"(lora:[^,，\s]+:[^,，\s]+)"
+        # 1. 分离 lora 参数（支持多个<lora:xxx:1>，带尖括号）
+        lora_pattern = r"(<lora:[^,，\s>]+:[^,，\s>]+>)"
         lora_matches = re.findall(lora_pattern, prompt_str)
         # 移除所有lora参数，剩下主提示词
         main_prompt = re.sub(lora_pattern, "", prompt_str)
@@ -1368,12 +1368,12 @@ class SDGenerator(Star):
         # 去除命令前缀
         prompt_str = raw_msg.lstrip(".／/原生画").strip()
         prompt_str, changed_keys = self._replace_local_tags(prompt_str)
-
+    
         # 构造用于消息显示的 changed 列表
         changed_display = [f"{k}→{self.local_tag_mgr.tags[k]}" for k in changed_keys]
         preset_tags = [item for item in changed_display if "预设" in item]
         other_tags = [item for item in changed_display if "预设" not in item]
-
+    
         msg = "在画了在画了"
         if changed_display:
             if preset_tags and not other_tags:
@@ -1383,32 +1383,32 @@ class SDGenerator(Star):
             else:
                 msg += f"，为你替换了以下tag：{', '.join(changed_display)}"
         await event.send(event.plain_result(msg))  # 用 await 只发一次
-
+    
         async with self.task_semaphore:
             # 检查webui可用性
             if not (await self.client.check_webui_available())[0]:
                 yield event.plain_result(messages.MSG_WEBUI_UNAVAILABLE)
                 return
-
+    
             verbose = self.config["verbose"]
             if verbose:
                 yield event.plain_result(messages.MSG_GENERATING)
-
+    
             # 文生图：始终用 positive_prompt_global
             positive_prompt = self.config.get("positive_prompt_global", "") + prompt_str
             negative_prompt = self.config.get("negative_prompt_global", "")
-
+    
             # 输出正向提示词
             if self.config.get("enable_show_positive_prompt", False):
                 yield event.plain_result(f"{messages.MSG_POSITIVE_PROMPT_DISPLAY}: {positive_prompt}")
-
+    
             # 生成图像
             payload = await self.utils.generate_payload(positive_prompt, negative_prompt)
             response = await self.client.call_t2i_api(payload)
             if not response.get("images"):
                 raise ValueError(messages.MSG_API_RETURN_ERROR)
-
+    
             images = response["images"]
-
+    
             async for result in self._process_and_yield_images(event, images, verbose):
                 yield result
