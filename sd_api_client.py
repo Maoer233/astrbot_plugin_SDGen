@@ -92,7 +92,16 @@ class SDAPIClient:
         return await self._fetch_webui_resource("embedding")
 
     async def get_lora_list(self):
-        return await self._fetch_webui_resource("lora")
+        """获取可用的 LoRA 模型列表，并输出调试信息"""
+        try:
+            lora_list = await self._fetch_webui_resource("lora")
+            logger.debug(f"get_lora_list 返回: {lora_list}")
+            if not lora_list:
+                logger.warning("LoRA模型列表为空，可能是WebUI未加载LoRA或API返回异常。")
+            return lora_list
+        except Exception as e:
+            logger.error(f"获取 LoRA 模型列表异常: {e}")
+            return []
 
     async def get_sampler_list(self):
         """获取可用的采样器列表"""
@@ -213,3 +222,8 @@ class SDAPIClient:
         except Exception as e:
             logger.error(f"获取当前模型时发生异常: {e}")
             return '未知模型'
+
+    async def list_lora(self, lora_models: list):
+        """列出可用的 LoRA 模型并返回其名称列表"""
+        logger.info(f"main.py list_lora 被调用，lora_models: {lora_models}")
+        return [lora["name"] for lora in lora_models]

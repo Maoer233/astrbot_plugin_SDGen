@@ -108,7 +108,7 @@ MSG_MODEL_SET_FAIL_LOG = "切换模型失败"
 MSG_MODEL_SET_EXCEPTION = "设置模型时发生异常"
 
 MSG_LORA_LIST_EMPTY = "没有可用的 LoRA 模型。"
-MSG_LORA_LIST_SUCCESS = "可用的 LoRA 模型:\n{lora_model_list}"
+MSG_LORA_LIST_SUCCESS = "可用的 LoRA 模型:\n{lora_list}"
 MSG_LORA_LIST_FAIL = "获取 LoRA 模型列表失败: {error}"
 
 MSG_NO_SAMPLER = "⚠️ 没有可用的采样器"
