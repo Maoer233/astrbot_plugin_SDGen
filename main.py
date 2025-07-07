@@ -92,25 +92,16 @@ class SDGenerator(Star):
         prompt_str = raw_msg.lstrip(".／/画").strip()
         
         # 记录替换前后内容
-        prompt_str, changed_keys = self._replace_local_tags(prompt_str)
+        replaced_prompt, changed_keys = self._replace_local_tags(prompt_str)
         
-        # 构造用于消息显示的 changed 列表
-        changed_display = [f"{k}→{self.local_tag_mgr.tags[k]}" for k in changed_keys]
+        # 构造并发送替换提示消息
+        if changed_keys:
+            replace_msg = self.local_tag_mgr.get_tag_replace_message(changed_keys)
+            await event.send(event.plain_result(f"在画了在画了，{replace_msg}"))
+        else:
+            await event.send(event.plain_result("在画了在画了"))
 
-        # 判断是否有“预设”相关tag
-        preset_tags = [item for item in changed_display if "预设" in item]
-        other_tags = [item for item in changed_display if "预设" not in item]
-        
-        msg = "在画了在画了"
-        if changed_display:
-            if preset_tags and not other_tags:
-                msg += "，预设相关tag已替换"
-            elif preset_tags and other_tags:
-                msg += f"，为你替换了以下tag：{', '.join(other_tags)}，预设相关tag已替换"
-            else:
-                msg += f"，为你替换了以下tag：{', '.join(changed_display)}"
-        await event.send(event.plain_result(msg))
-        async for result in self._generate_image_impl(event, prompt_str, skip_verbose_msg=True):
+        async for result in self._generate_image_impl(event, replaced_prompt, skip_verbose_msg=True):
             yield result
 
     @filter.command("图生图", alias={"i2i_draw"})
