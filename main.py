@@ -101,6 +101,14 @@ class SDGenerator(Star):
         main_prompt = main_prompt.strip(",， ").strip()
         # 2. 本地tag替换
         main_prompt, changed_keys = self._replace_local_tags(main_prompt)
+
+        # ====== 新增：白名单群聊自动追加专属提示词 ======
+        group_id = event.get_group_id()
+        if group_id and group_id in self.whitelist_groups:
+            whitelist_suffix = self._load_prompt_prefix("whitelist_suffix")
+            if whitelist_suffix:
+                main_prompt = f"{main_prompt} {whitelist_suffix}"
+
         # 3. 主提示词送入LLM
         llm_result = await self.utils.generate_prompt_with_llm(event, main_prompt)
         # 4. 拼接LLM结果和lora参数
@@ -108,7 +116,7 @@ class SDGenerator(Star):
         if lora_matches:
             final_prompt = f"{llm_result}," + ",".join(lora_matches)
             logger.info(f"已拼接LoRA模型参数: {', '.join(lora_matches)}")  # 新增日志输出
-        # 5. 构造用于消息显示的 changed 列表
+        # ...existing code...        # 5. 构造用于消息显示的 changed 列表
         changed_display = [f"{k}→{self.local_tag_mgr.tags[k]}" for k in changed_keys]
         preset_tags = [item for item in changed_display if "预设" in item]
         other_tags = [item for item in changed_display if "预设" not in item]
