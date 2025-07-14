@@ -41,6 +41,12 @@
         "default": false,
         "hint": "设置为true时启用"
     },
+    "enable_forward_message": {
+        "type": "bool",
+        "description": "启用合并转发消息",
+        "default": false,
+        "hint": "设置为true时，将以合并转发的形式发送图片和提示词"
+    },
     "positive_prompt_global": {
         "type": "string",
         "description": "全局正面提示词",

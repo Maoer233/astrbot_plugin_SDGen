@@ -11,7 +11,7 @@ from astrbot.api.star import Context, Star, register, StarTools
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.event.filter import EventMessageType
 from astrbot.core.utils.session_waiter import session_waiter, SessionController
-from astrbot.api.all import AstrBotConfig, logger, llm_tool, command_group, Image, BaseMessageComponent, Image as MessageImage, Plain as MessageText
+from astrbot.api.all import AstrBotConfig, logger, llm_tool, command_group, Image, BaseMessageComponent, Image as MessageImage, Plain as MessageText, Node
 
 from .sd_api_client import SDAPIClient
 from .sd_utils import SDUtils
@@ -231,10 +231,6 @@ class SDGenerator(Star):
                 # 文生图：回退到 positive_prompt_global
                 positive_prompt = self.config.get("positive_prompt_global", "") + prompt
 
-            #输出正向提示词
-            if self.config.get("enable_show_positive_prompt", False):
-                yield event.plain_result(f"{messages.MSG_POSITIVE_PROMPT_DISPLAY}: {positive_prompt}")
-
             # 生成图像
             payload = await self.utils.generate_payload(positive_prompt, negative_prompt) # 传递负面提示词
             response = await self.client.call_t2i_api(payload)
@@ -243,7 +239,7 @@ class SDGenerator(Star):
 
             images = response["images"]
 
-            async for result in self._process_and_yield_images(event, images, verbose):
+            async for result in self._process_and_yield_images(event, images, verbose, positive_prompt):
                 yield result
     async def _handle_api_errors(self, event: AstrMessageEvent, func, *args, **kwargs):
         """
@@ -268,14 +264,14 @@ class SDGenerator(Star):
                 err_str = messages.MSG_ERROR_API_HIDDEN
             yield event.plain_result(f"{messages.MSG_OTHER_ERROR}\n{err_str}")
 
-    async def _process_and_yield_images(self, event: AstrMessageEvent, images: list, verbose: bool):
+    async def _process_and_yield_images(self, event: AstrMessageEvent, images: list, verbose: bool, positive_prompt: str = ""):
         """
-        处理图像（如放大）并发送结果。
+        处理图像（如放大）并根据配置发送结果（直接发送或合并转发）。
         """
-        chain = []
         if self.config.get("enable_upscale") and verbose:
             yield event.plain_result(messages.MSG_PROCESSING_IMAGE)
 
+        image_components = []
         for image_data in images:
             image_bytes = base64.b64decode(image_data)
             image_b64 = base64.b64encode(image_bytes).decode("utf-8")
@@ -284,11 +280,32 @@ class SDGenerator(Star):
             if self.config.get("enable_upscale"):
                 image_b64 = await self.client.apply_image_processing(image_b64)
 
-            # 添加到链对象
-            chain.append(Image.fromBase64(image_b64))
+            image_components.append(Image.fromBase64(image_b64))
 
-        # 将链式结果发送给事件
-        yield event.chain_result(chain)
+        enable_forward = self.config.get("enable_forward_message", False)
+        show_prompt = self.config.get("enable_show_positive_prompt", False)
+
+        if enable_forward:
+            node_content = []
+            node_content.extend(image_components)
+            if show_prompt and positive_prompt:
+                node_content.append(MessageText(f"{messages.MSG_POSITIVE_PROMPT_DISPLAY}: {positive_prompt}"))
+            
+            # 确保有内容再创建Node
+            if node_content:
+                node = Node(
+                    uin=event.get_sender_id(),
+                    name=event.get_sender_name(),
+                    content=node_content
+                )
+                yield event.chain_result([node])
+        else:
+            # 不使用合并转发
+            if show_prompt and positive_prompt:
+                yield event.plain_result(f"{messages.MSG_POSITIVE_PROMPT_DISPLAY}: {positive_prompt}")
+            
+            if image_components:
+                yield event.chain_result(image_components)
 
     async def _img2img_impl(self, event: AstrMessageEvent, image_data: str, prompt: str):
         """实际的图生图逻辑，供 img2img_command/img2img_draw 调用"""
@@ -346,7 +363,7 @@ class SDGenerator(Star):
 
             images = response["images"]
 
-            async for result in self._process_and_yield_images(event, images, verbose):
+            async for result in self._process_and_yield_images(event, images, verbose, final_prompt):
                 yield result
 
     @sd.command("gen")
@@ -611,6 +628,21 @@ class SDGenerator(Star):
             logger.error(f"{messages.MSG_SHOW_PROMPT_FAIL_LOG}: {e}")
             yield event.plain_result(messages.MSG_SHOW_PROMPT_FAIL)
 
+    @sd.command("forward")
+    async def set_forward_message(self, event: AstrMessageEvent):
+        """切换合并转发消息模式"""
+        try:
+            current_setting = self.config.get("enable_forward_message", False)
+            new_setting = not current_setting
+            self.config["enable_forward_message"] = new_setting
+            self.config.save_config()
+
+            status_msg = "合并转发模式已开启" if new_setting else "合并转发模式已关闭"
+            yield event.plain_result(status_msg)
+        except Exception as e:
+            logger.error(f"切换合并转发模式失败: {e}")
+            yield event.plain_result("切换合并转发模式失败")
+
     @sd.command("timeout")
     async def set_timeout(self, event: AstrMessageEvent, time: int):
         """设置会话超时时间"""
@@ -641,6 +673,7 @@ class SDGenerator(Star):
             show_positive_prompt = self.config.get("enable_show_positive_prompt", False)  # 是否显示正向提示词
             generate_prompt = self.config.get("enable_generate_prompt", False)  # 是否启用生成提示词
             enable_img2img_generate_prompt = self.config.get("enable_img2img_generate_prompt", True) # 获取图生图LLM生成提示词开关
+            enable_forward_message = self.config.get("enable_forward_message", False) # 获取合并转发开关
 
             conf_message = (
                 f"{messages.MSG_GEN_PARAMS}:\n{gen_params}\n\n"
@@ -650,6 +683,7 @@ class SDGenerator(Star):
                 f"{messages.MSG_VERBOSE_MODE}: {'开启' if verbose else '关闭'}\n\n"
                 f"{messages.MSG_UPSCALE_MODE}: {'开启' if upscale else '关闭'}\n\n"
                 f"{messages.MSG_SHOW_PROMPT_MODE}: {'开启' if show_positive_prompt else '关闭'}\n\n"
+                f"合并转发模式: {'开启' if enable_forward_message else '关闭'}\n\n"
                 f"{messages.MSG_LLM_PROMPT_MODE}: {'开启' if generate_prompt else '关闭'}\n\n"
                 f"{messages.MSG_LLM_IMG2IMG_PROMPT_MODE}: {'开启' if enable_img2img_generate_prompt else '关闭'}"
             )
@@ -1406,10 +1440,6 @@ class SDGenerator(Star):
             positive_prompt = self.config.get("positive_prompt_global", "") + prompt_str
             negative_prompt = self.config.get("negative_prompt_global", "")
     
-            # 输出正向提示词
-            if self.config.get("enable_show_positive_prompt", False):
-                yield event.plain_result(f"{messages.MSG_POSITIVE_PROMPT_DISPLAY}: {positive_prompt}")
-    
             # 生成图像
             payload = await self.utils.generate_payload(positive_prompt, negative_prompt)
             response = await self.client.call_t2i_api(payload)
@@ -1418,5 +1448,5 @@ class SDGenerator(Star):
     
             images = response["images"]
     
-            async for result in self._process_and_yield_images(event, images, verbose):
+            async for result in self._process_and_yield_images(event, images, verbose, positive_prompt):
                 yield result
