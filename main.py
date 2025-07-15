@@ -40,10 +40,7 @@ class SDGenerator(Star):
         self.prompt_prefix_path = plugin_dir / "prompt_prefix.json"
         self._prompt_prefix_cache = None
 
-        # 加载白名单和黑名单配置
-        self.whitelist_groups = self.config.get("whitelist_groups", [])
-        self.blacklist_groups = self.config.get("blacklist_groups", [])
-        self.negative_prompt_whitelist = self.config.get("negative_prompt_whitelist", "")
+        # 白名单和黑名单配置将在使用时动态获取，以确保实时性
 
     async def terminate(self):
         """插件卸载/停用时调用，用于清理资源"""
@@ -104,7 +101,8 @@ class SDGenerator(Star):
 
         # ====== 新增：白名单群聊自动追加专属提示词 ======
         group_id = event.get_group_id()
-        if group_id and group_id in self.whitelist_groups:
+        whitelist_groups = self.config.get("whitelist_groups", [])
+        if group_id and group_id in whitelist_groups:
             whitelist_suffix = self._load_prompt_prefix("whitelist_suffix")
             if whitelist_suffix:
                 main_prompt = f"{main_prompt} {whitelist_suffix}"
@@ -198,7 +196,8 @@ class SDGenerator(Star):
             group_id = event.get_group_id()
 
             # 黑名单检查
-            if group_id and group_id in self.blacklist_groups:
+            blacklist_groups = self.config.get("blacklist_groups", [])
+            if group_id and group_id in blacklist_groups:
                 logger.info(f"群聊 {group_id} 在黑名单中，不响应绘画命令。")
                 return # 不响应任何绘画命令
 
@@ -211,13 +210,13 @@ class SDGenerator(Star):
             if verbose and not skip_verbose_msg:
                 yield event.plain_result(messages.MSG_GENERATING)
 
-            # 根据白名单设置负面提示词和LLM提示词附加限制
+            # 根据白名单设置负面提示词
             negative_prompt = self.config.get("negative_prompt_global", "")
-            enable_generate_prompt = self.config.get("enable_generate_prompt", True)
-            
-            if group_id and group_id in self.whitelist_groups:
-                if self.negative_prompt_whitelist:
-                    negative_prompt = self.negative_prompt_whitelist
+            whitelist_groups = self.config.get("whitelist_groups", [])
+            if group_id and group_id in whitelist_groups:
+                negative_prompt_whitelist = self.config.get("negative_prompt_whitelist", "")
+                if negative_prompt_whitelist:
+                    negative_prompt = negative_prompt_whitelist
 
             # 这里不要再调用 LLM 了，直接用 prompt
             # generated_prompt = await self.utils.generate_prompt_with_llm(event, prompt)
@@ -313,7 +312,8 @@ class SDGenerator(Star):
             group_id = event.get_group_id()
 
             # 黑名单检查
-            if group_id and group_id in self.blacklist_groups:
+            blacklist_groups = self.config.get("blacklist_groups", [])
+            if group_id and group_id in blacklist_groups:
                 logger.info(f"群聊 {group_id} 在黑名单中，不响应绘画命令。")
                 return # 不响应任何绘画命令
 
@@ -337,13 +337,13 @@ class SDGenerator(Star):
                 closest_width, closest_height = self.utils._get_closest_resolution(original_width, original_height)
                 yield event.plain_result(messages.MSG_IMG2IMG_RESOLUTION_AUTO_SET.format(width=closest_width, height=closest_height))
 
-            # 根据白名单设置负面提示词和LLM提示词附加限制
+            # 根据白名单设置负面提示词
             negative_prompt = self.config.get("negative_prompt_global", "")
-            enable_img2img_generate_prompt = self.config.get("enable_img2img_generate_prompt", True)
-            
-            if group_id and group_id in self.whitelist_groups:
-                if self.negative_prompt_whitelist:
-                    negative_prompt = self.negative_prompt_whitelist
+            whitelist_groups = self.config.get("whitelist_groups", [])
+            if group_id and group_id in whitelist_groups:
+                negative_prompt_whitelist = self.config.get("negative_prompt_whitelist", "")
+                if negative_prompt_whitelist:
+                    negative_prompt = negative_prompt_whitelist
                 
 
             # 这里不再调用 LLM，只用传入的 prompt
@@ -1427,18 +1427,31 @@ class SDGenerator(Star):
         await event.send(event.plain_result(msg))  # 用 await 只发一次
     
         async with self.task_semaphore:
+            group_id = event.get_group_id()
+
+            # 黑名单检查
+            blacklist_groups = self.config.get("blacklist_groups", [])
+            if group_id and group_id in blacklist_groups:
+                logger.info(f"群聊 {group_id} 在黑名单中，不响应绘画命令。")
+                return
+
             # 检查webui可用性
             if not (await self.client.check_webui_available())[0]:
                 yield event.plain_result(messages.MSG_WEBUI_UNAVAILABLE)
                 return
     
-            verbose = self.config["verbose"]
-            if verbose:
-                yield event.plain_result(messages.MSG_GENERATING)
+            # 移除冗余的“在画了”消息，因为在函数开头已经发送过
     
             # 文生图：始终用 positive_prompt_global
             positive_prompt = self.config.get("positive_prompt_global", "") + prompt_str
+            
+            # 根据白名单设置负面提示词
             negative_prompt = self.config.get("negative_prompt_global", "")
+            whitelist_groups = self.config.get("whitelist_groups", [])
+            if group_id and group_id in whitelist_groups:
+                negative_prompt_whitelist = self.config.get("negative_prompt_whitelist", "")
+                if negative_prompt_whitelist:
+                    negative_prompt = negative_prompt_whitelist
     
             # 生成图像
             payload = await self.utils.generate_payload(positive_prompt, negative_prompt)
