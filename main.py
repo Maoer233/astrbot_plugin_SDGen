@@ -1441,6 +1441,7 @@ class SDGenerator(Star):
                 return
     
             # 移除冗余的“在画了”消息，因为在函数开头已经发送过
+            verbose = self.config["verbose"]
     
             # 文生图：始终用 positive_prompt_global
             positive_prompt = self.config.get("positive_prompt_global", "") + prompt_str
